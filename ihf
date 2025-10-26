@@ -1,7 +1,0 @@
-#!/usr/bin/env python3
-"""Entry point for import-hacking-fixer command-line tool."""
-import import_hacking_fixer
-
-
-if __name__ == "__main__":
-    import_hacking_fixer.main()
