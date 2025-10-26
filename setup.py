@@ -4,10 +4,10 @@ import setuptools
 setuptools.setup(
     name="import-hacking-fixer",
     version="0.1.0",
-    py_modules=["import_hacking_fixer"],
+    packages=["import_hacking_fixer"],
     entry_points={
         "console_scripts": [
-            "ihf = import_hacking_fixer:main",
+            "ihf = import_hacking_fixer.cli:main",
         ],
     },
     author="",
