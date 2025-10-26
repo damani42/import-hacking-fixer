@@ -1,25 +1,21 @@
 #!/usr/bin/env python3
 """
 import_hacking_fixer.py
-
 Command-line tool to check and fix Python import statements according to the
 OpenStack Hacking style guidelines (H301, H303, H304, H306).
-
 Usage:
-    python import_hacking_fixer.py PATH [--apply] [--project-packages PKG1,PKG2]
+python import_hacking_fixer.py PATH [--apply] [--project-packages PKG1,PKG2]
 """
-
 import argparse
 import ast
+import collections
 import os
 import sys
-from collections import defaultdict
-from typing import Dict, Iterable, List, Set, Tuple
+import typing
 
-
-def get_stdlib_modules() -> Set[str]:
+def get_stdlib_modules() -> typing.Set[str]:
     """Return a set of standard library top-level modules."""
-    stdlib: Set[str] = set()
+    stdlib: typing.Set[str] = set()
     if hasattr(sys, "stdlib_module_names"):
         stdlib.update(sys.stdlib_module_names)
     else:
@@ -30,41 +26,38 @@ def get_stdlib_modules() -> Set[str]:
                 stdlib.add(name[:-3])
             elif os.path.isdir(os.path.join(libdir, name)):
                 stdlib.add(name)
-    return {mod.split(".")[0] for mod in stdlib}
+    return {mod.split('.')[0] for mod in stdlib}
 
-
-def find_project_packages(root: str) -> Set[str]:
-    """Identify top-level packages in the given project root by presence of __init__.py."""
-    packages: Set[str] = set()
+def find_project_packages(root: str) -> typing.Set[str]:
+    """Detect first-level packages in the project by presence of __init__.py."""
+    packages: typing.Set[str] = set()
     for entry in os.listdir(root):
         path = os.path.join(root, entry)
         if os.path.isdir(path) and os.path.isfile(os.path.join(path, "__init__.py")):
             packages.add(entry)
     return packages
 
-
-def classify_import(module: str, stdlib: Set[str], project_pkgs: Set[str]) -> str:
-    """Classify module name into 'stdlib', 'project' or 'thirdparty'."""
-    top = module.split(".")[0]
+def classify_import(module: str, stdlib: typing.Set[str], project_pkgs: typing.Set[str]) -> str:
+    """Classify import as 'stdlib', 'project' or 'thirdparty'."""
+    top = module.split('.')[0]
     if top in stdlib:
         return "stdlib"
     if top in project_pkgs:
         return "project"
     return "thirdparty"
 
-
-def normalize_import(name: str, alias: str = None) -> str:
+def normalize_import(name: str, alias: typing.Optional[str] = None) -> str:
+    """Return normalized import spec, including alias if present."""
     return name if alias is None else f"{name} as {alias}"
 
-
-def process_imports(nodes: Iterable[ast.AST], stdlib: Set[str], project_pkgs: Set[str]) -> Tuple[Dict[str, List[str]], List[Tuple[int, str]]]:
-    """Process import nodes, grouping and sorting them, and collect warnings.
-
-    Records H301 for multiple imports on a single line, H303 for wildcard imports and H304 for relative imports.
-    Returns a dictionary mapping group names to lists of import statements and a list of warnings.
+def process_imports(nodes: typing.Iterable[ast.AST], stdlib: typing.Set[str], project_pkgs: typing.Set[str]) -> typing.Tuple[typing.Dict[str, typing.List[str]], typing.List[typing.Tuple[int, str]]]:
     """
-    groups: Dict[str, List[str]] = defaultdict(list)
-    warnings: List[Tuple[int, str]] = []
+    Process import and import-from nodes, grouping and sorting them.
+    Returns a dict {group: list of normalized import strings} and a list
+    of warnings (lineno, message).
+    """
+    groups: typing.Dict[str, typing.List[str]] = collections.defaultdict(list)
+    warnings: typing.List[typing.Tuple[int, str]] = []
     for node in nodes:
         if isinstance(node, ast.Import):
             if len(node.names) > 1:
@@ -77,7 +70,7 @@ def process_imports(nodes: Iterable[ast.AST], stdlib: Set[str], project_pkgs: Se
             if node.module == '__future__':
                 continue
             if node.level and node.level > 0:
-                warnings.append((node.lineno, f"H304: relative import detected: 'from {'.' * node.level}{node.module or ''} import ...'"))
+                warnings.append((node.lineno, f"H304: relative import detected: 'from {'.'*node.level}{node.module or ''} import ...'"))
                 continue
             base_mod = node.module or ''
             if len(node.names) > 1:
@@ -93,10 +86,9 @@ def process_imports(nodes: Iterable[ast.AST], stdlib: Set[str], project_pkgs: Se
         groups[key] = sorted(groups[key], key=lambda x: x.lower())
     return groups, warnings
 
-
-def rewrite_imports(original_lines: List[str], groups: Dict[str, List[str]]) -> List[str]:
-    """Compose new import block from grouped imports. Always ends with a blank line."""
-    new_import_lines: List[str] = []
+def rewrite_imports(original_lines: typing.List[str], groups: typing.Dict[str, typing.List[str]]) -> typing.List[str]:
+    """Compose a new import block from grouped imports. Always ends with a blank line."""
+    new_import_lines: typing.List[str] = []
     order = ['stdlib', 'thirdparty', 'project']
     for group in order:
         if groups.get(group):
@@ -115,9 +107,8 @@ def rewrite_imports(original_lines: List[str], groups: Dict[str, List[str]]) -> 
             new_import_lines.append("\n")
     return new_import_lines
 
-
-def find_import_block(lines: List[str]) -> Tuple[int, int]:
-    """Find the start and end line indices (inclusive) of the import block."""
+def find_import_block(lines: typing.List[str]) -> typing.Tuple[int, int]:
+    """Find the start and end indices of the import block at the top of the file."""
     start = None
     end = None
     for idx, line in enumerate(lines):
@@ -134,19 +125,21 @@ def find_import_block(lines: List[str]) -> Tuple[int, int]:
         return (-1, -1)
     return (start, end)
 
-
-def process_file(path: str, stdlib: Set[str], project_pkgs: Set[str], apply: bool = False) -> Tuple[bool, List[Tuple[int, str]]]:
-    """Process a single Python file. Returns (modified, warnings). If apply is True, rewrite the file."""
+def process_file(path: str, stdlib: typing.Set[str], project_pkgs: typing.Set[str], apply: bool = False) -> typing.Tuple[bool, typing.List[typing.Tuple[int, str]]]:
+    """
+    Process a single Python file. Returns (modified, warnings).
+    If apply=True, rewrite the file in place.
+    """
     with open(path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
     tree = ast.parse(''.join(lines), filename=path)
     import_nodes = [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
     groups, warnings = process_imports(import_nodes, stdlib, project_pkgs)
     if not import_nodes:
-        return False, warnings
+        return (False, warnings)
     start, end = find_import_block(lines)
     if start == -1:
-        return False, warnings
+        return (False, warnings)
     new_imports = rewrite_imports(lines[start:end+1], groups)
     new_content = ''.join(new_imports) + ''.join(lines[end+1:])
     original_content = ''.join(lines)
@@ -154,11 +147,10 @@ def process_file(path: str, stdlib: Set[str], project_pkgs: Set[str], apply: boo
     if modified and apply:
         with open(path, 'w', encoding='utf-8') as f:
             f.write(new_content)
-    return modified, warnings
+    return (modified, warnings)
 
-
-def iter_python_files(path: str) -> Iterable[str]:
-    """Yield Python file paths under the given path (file or directory)."""
+def iter_python_files(path: str) -> typing.Iterable[str]:
+    """Iterate recursively over Python files under a path."""
     if os.path.isdir(path):
         for root, _, filenames in os.walk(path):
             for fn in filenames:
@@ -167,7 +159,6 @@ def iter_python_files(path: str) -> Iterable[str]:
     else:
         if path.endswith('.py'):
             yield path
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check and fix Python imports (OpenStack style).")
@@ -188,7 +179,6 @@ def main() -> None:
                 print(f"[{file_path}] file updated.")
             else:
                 print(f"[{file_path}] imports would be modified.")
-
 
 if __name__ == "__main__":
     main()
