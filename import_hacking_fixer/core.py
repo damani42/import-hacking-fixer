@@ -75,7 +75,7 @@ def normalize_import(module: str, names: List[str]) -> str:
     else:
         return f"import {', '.join(names)}"
 
-def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> Tuple[bool, List[Tuple[int, str]]]:
+def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> Tuple[bool, List[str]]:
     """Process import nodes in the AST and determine if reordering is needed.
 
     Args:
@@ -126,8 +126,8 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
 
     # Determine if modification is needed by comparing ordered lists
     # Flatten original_lines to exclude duplicates but preserve order
-    original_unique = []
-    seen = set()
+    original_unique: List[str] = []
+    seen: Set[str] = set()
     for line in original_lines:
         if line not in seen:
             original_unique.append(line)
