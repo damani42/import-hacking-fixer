@@ -6,10 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "import-hacking-fixer"
 version = "0.1.0"
 description = "Command-line tool to check and fix Python imports according to OpenStack hacking rules"
-authors = [{ name = "", email = "" }]
+
 license = { text = "MIT" }
 requires-python = ">=3.7"
-
+authors = [{ name = "Damani", email = "" }]
 [project.scripts]
 ihf = "import_hacking_fixer.cli:main"
 
