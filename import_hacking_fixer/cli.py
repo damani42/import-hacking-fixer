@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Command-line interface for import-hacking-fixer using Click."""
 
-import sys
-import logging
-import importlib.metadata
+from importlib import metadata
 from pathlib import Path
+import logging
+import sys
 
-import click
 from import_hacking_fixer import core
+import click
+
+
+
+
 
 
 try:
@@ -86,6 +90,11 @@ def check(path: str, project_packages: str) -> None:
 def fix(path: str, project_packages: str) -> None:
     exit_code = _handle_files(Path(path), project_packages, apply_changes=True)
     sys.exit(exit_code)
+
+
+def main():
+    """Entry point for the CLI."""
+    cli()
 
 
 if __name__ == "__main__":

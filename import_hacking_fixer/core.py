@@ -5,13 +5,23 @@ with import order, and fix them in Python files. It also exposes functions to
 discover project packages and standard library modules.
 """
 from __future__ import annotations
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict
+from typing import Iterable
+from typing import Iterator
+from typing import List
+from typing import Optional
+from typing import Set
+from typing import Tuple
 import ast
 import logging
 import sys
 import sysconfig
-from collections import defaultdict
-from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
+
+
+
+
 
 def get_stdlib_modules() -> Set[str]:
     """Return a set of top-level standard library module names."""
@@ -26,10 +36,11 @@ def get_stdlib_modules() -> Set[str]:
             modules.add(name)
     return modules
 
-def find_project_packages(root: Path) -> Set[str]:
+def find_project_packages(root: str) -> Set[str]:
     """Return a set of top-level package names for the given project root."""
     packages: Set[str] = set()
-    for item in root.iterdir():
+    root_path = Path(root)
+    for item in root_path.iterdir():
         if item.is_dir() and (item / '__init__.py').exists():
             packages.add(item.name)
     return packages
@@ -189,10 +200,11 @@ def process_file(file_path: str, stdlib: Set[str], project_pkgs: Set[str], apply
         warnings.append((0, "Import block could not be located."))
         return False, warnings
 
-def iter_python_files(root: Path, ignore: Optional[Iterable[str]] = None) -> Iterator[Path]:
+def iter_python_files(root: str, ignore: Optional[Iterable[str]] = None) -> Iterator[Path]:
     """Yield Python files under the given root directory, excluding specified patterns."""
     ignore_set = set(ignore or [])
-    for path in root.rglob('*.py'):
-        if any(str(path).startswith(str(root / pattern)) for pattern in ignore_set):
+    root_path = Path(root)
+    for path in root_path.rglob('*.py'):
+        if any(str(path).startswith(str(root_path / pattern)) for pattern in ignore_set):
             continue
         yield path
