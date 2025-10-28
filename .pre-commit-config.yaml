@@ -1,3 +1,5 @@
+minimum_pre_commit_version: '3.0.0'
+
 repos:
   - repo: local
     hooks:
@@ -6,3 +8,5 @@ repos:
         entry: ihf fix
         language: system
         types: [python]
+        stages: [commit]
+        pass_filenames: false
