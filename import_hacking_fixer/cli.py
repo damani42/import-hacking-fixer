@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Command-line interface for import-hacking-fixer using Click."""
 
-from importlib import metadata
-from pathlib import Path
 import logging
 import sys
+from importlib import metadata
+from pathlib import Path
 
-from import_hacking_fixer import core
 import click
+from import_hacking_fixer import core
+
+
+
 
 
 
@@ -15,7 +18,7 @@ import click
 
 
 try:
-    VERSION = f"import-hacking-fixer {importlib.metadata.version('import_hacking_fixer')}"
+    VERSION = f"import-hacking-fixer {metadata.version('import_hacking_fixer')}"
 except Exception:
     VERSION = "import-hacking-fixer"
 

@@ -5,6 +5,10 @@ with import order, and fix them in Python files. It also exposes functions to
 discover project packages and standard library modules.
 """
 from __future__ import annotations
+import ast
+import logging
+import sys
+import sysconfig
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict
@@ -14,10 +18,9 @@ from typing import List
 from typing import Optional
 from typing import Set
 from typing import Tuple
-import ast
-import logging
-import sys
-import sysconfig
+
+
+
 
 
 
@@ -75,8 +78,16 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
                 warnings.append((node.lineno, "H301: one import per line"))
             for alias in node.names:
                 name = alias.name
-                # convert project or stdlib submodules to from-imports
-                if '.' in name:
+                # Special handling for common stdlib submodules that should stay as import
+                special_cases = {'importlib.util', 'importlib.metadata', 'typing.Dict', 'typing.List', 
+                               'typing.Set', 'typing.Tuple', 'typing.Optional', 'typing.Iterable', 
+                               'typing.Iterator', 'collections.defaultdict', 'pathlib.Path'}
+                
+                if name in special_cases:
+                    # Keep as import statement for special cases
+                    category = classify_import(name.split('.')[0], stdlib, project_pkgs)
+                    imports_list.append((category, '', name, "import"))
+                elif '.' in name:
                     root, rest = name.split('.', 1)
                     # H302: import each attribute from module directly
                     if root in stdlib or root in project_pkgs:
@@ -112,16 +123,30 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
         logging.debug("No import statements found.")
         return False, [], warnings
 
+    # Special handling for __future__ imports - they must come first
+    future_imports = []
+    other_imports = []
+    
+    for item in imports_list:
+        category, module, name, import_type = item
+        if module == '__future__':
+            future_imports.append(item)
+        else:
+            other_imports.append(item)
+    
     category_order = {'stdlib': 0, 'third_party': 1, 'project': 2}
-    # sort by category, then import_type (from first), then module/name
-    sorted_list = sorted(
-        imports_list,
+    # sort by category, then import_type (import first, then from), then module/name
+    sorted_other = sorted(
+        other_imports,
         key=lambda x: (
             category_order[x[0]],
-            0 if x[3] == "from" else 1,
+            0 if x[3] == "import" else 1,  # import comes before from
             f"{x[1]}.{x[2]}" if x[1] else x[2],
         ),
     )
+    
+    # Combine future imports first, then others
+    sorted_list = future_imports + sorted_other
 
     new_lines: List[str] = []
     seen_keys: Set[Tuple[str, str, str, str]] = set()
@@ -154,14 +179,25 @@ def find_import_block(lines: List[str]) -> Optional[Tuple[int, int]]:
     """Find the start and end indices of the contiguous block of import statements."""
     start: Optional[int] = None
     end: Optional[int] = None
+    in_import_block = False
+    
     for i, line in enumerate(lines):
         stripped = line.strip()
+        
+        # Check if this is an import line
         if stripped.startswith('import ') or stripped.startswith('from '):
             if start is None:
                 start = i
             end = i + 1
-        elif start is not None and stripped:
+            in_import_block = True
+        elif stripped == '':
+            # Empty line - continue if we're in an import block
+            if in_import_block:
+                continue
+        elif in_import_block:
+            # Non-empty, non-import line - end of import block
             break
+    
     return (start, end) if start is not None and end is not None else None
 
 def process_file(file_path: str, stdlib: Set[str], project_pkgs: Set[str], apply: bool = False) -> Tuple[bool, List[Tuple[int, str]]]:
