@@ -119,6 +119,8 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
                 category = classify_import(module, stdlib, project_pkgs)
                 imports_list.append((category, module, name, "from"))
 
+    logging.debug(f"Found {len(imports_list)} imports and {len(warnings)} warnings")
+    
     if not imports_list:
         logging.debug("No import statements found.")
         return False, [], warnings

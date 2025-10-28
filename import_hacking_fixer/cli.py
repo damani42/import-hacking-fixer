@@ -42,9 +42,15 @@ def _handle_files(path: Path, project_packages: str, apply_changes: bool) -> int
     exit_code = 0
     total_warnings = 0
 
-    for file_path in core.iter_python_files(str(path)):
+    # Handle single file or directory
+    if path.is_file():
+        file_paths = [path]
+    else:
+        file_paths = list(core.iter_python_files(str(path)))
+
+    for file_path in file_paths:
         try:
-            modified, warnings = core.process_file(file_path, stdlib, project_pkgs, apply=apply_changes)
+            modified, warnings = core.process_file(str(file_path), stdlib, project_pkgs, apply=apply_changes)
         except Exception as exc:
             logging.error("[%s] ERROR: %s", file_path, exc)
             exit_code = max(exit_code, 2)
