@@ -1,0 +1,8 @@
+repos:
+  - repo: local
+    hooks:
+      - id: import-hacking-fixer
+        name: import-hacking-fixer
+        entry: ihf fix
+        language: system
+        types: [python]
