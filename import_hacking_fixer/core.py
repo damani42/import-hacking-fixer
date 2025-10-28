@@ -6,11 +6,11 @@ discover project packages and standard library modules.
 """
 from __future__ import annotations
 import ast
+from collections import defaultdict
 import logging
+from pathlib import Path
 import sys
 import sysconfig
-from collections import defaultdict
-from pathlib import Path
 from typing import Dict
 from typing import Iterable
 from typing import Iterator
@@ -18,6 +18,8 @@ from typing import List
 from typing import Optional
 from typing import Set
 from typing import Tuple
+
+
 
 
 
@@ -63,6 +65,21 @@ def normalize_import(module: str, names: List[str]) -> str:
         return f"from {module} import {', '.join(names)}"
     else:
         return f"import {', '.join(names)}"
+
+def import_normalize(line: str) -> str:
+    """Convert 'from x import y' to 'import x.y' for alphabetical comparison.
+    
+    This matches hacking.core.import_normalize behavior.
+    """
+    split_line = line.split()
+    if ("import" in line and line.startswith("from ") and "," not in line and
+            split_line[2] == "import" and split_line[3] != "*" and
+            split_line[1] != "__future__" and
+            (len(split_line) == 4 or
+             (len(split_line) == 6 and split_line[4] == "as"))):
+        return "import %s.%s" % (split_line[1], split_line[3])
+    else:
+        return line
 
 def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> Tuple[bool, List[str], List[Tuple[int, str]]]:
     """Process import nodes in the AST and build a sorted list of normalized imports
@@ -137,13 +154,13 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
             other_imports.append(item)
     
     category_order = {'stdlib': 0, 'third_party': 1, 'project': 2}
-    # sort by category, then import_type (import first, then from), then module/name
+    # sort by category, then alphabetically (like hacking does)
     sorted_other = sorted(
         other_imports,
         key=lambda x: (
             category_order[x[0]],
-            0 if x[3] == "import" else 1,  # import comes before from
-            f"{x[1]}.{x[2]}" if x[1] else x[2],
+            # Use hacking-style normalization for alphabetical sorting
+            import_normalize(normalize_import(x[1], [x[2]])).lower(),
         ),
     )
     
@@ -153,6 +170,7 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
     new_lines: List[str] = []
     seen_keys: Set[Tuple[str, str, str, str]] = set()
     current_category: Optional[str] = None
+    
     for category, module, name, import_type in sorted_list:
         key = (category, module, name, import_type)
         if key in seen_keys:
@@ -160,8 +178,10 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
         if current_category is None:
             current_category = category
         elif category != current_category:
+            # Add blank line between different categories (OpenStack style)
             new_lines.append('')
             current_category = category
+        
         # build normalized import line
         if import_type == "from":
             # from import
@@ -169,6 +189,8 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
         else:
             new_lines.append(normalize_import('', [name]))
         seen_keys.add(key)
+    
+    # Add final blank line after all imports
     new_lines.append('')
     modified = True
     return modified, new_lines, warnings
