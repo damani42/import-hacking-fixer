@@ -9,229 +9,172 @@ functions to discover project packages and standard library modules.
 from __future__ import annotations
 
 import ast
-import logging
-import sys
 from collections import defaultdict
+import sys
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
+
+# Import helper functions from parser and rules modules
+from .parser import extract_imports_from_file
+from .rules import classify_import as classify_import_rule
 
 def get_stdlib_modules() -> Set[str]:
-    """Return a set of top-level standard library module names.
-
-    This inspects the directory of the Python standard library and built-in modules,
-    and returns the names of .py files or packages (directories containing an ``__init__.py`` file).
-    Only top-level modules are considered.
-
-    Returns:
-        A set of module names representing top-level standard library modules.
-    """
+    """Return a set of top-level standard library module names."""
     stdlib_dir = Path(sys.modules['sys'].__file__).parent
     modules: Set[str] = set()
     for entry in stdlib_dir.iterdir():
-        name = entry.stem
-        if entry.is_file() and entry.suffix == '.py':
+        name = entry.name
+        if entry.is_file() and name.endswith(".py") and name != "__init__.py":
+            modules.add(name[:-3])
+        elif entry.is_dir():
             modules.add(name)
-        elif entry.is_dir() and (entry / '__init__.py').exists():
-            modules.add(name)
-    return modules
+    return {mod.split(".")[0] for mod in modules}
 
-def find_project_packages(root: Path) -> Set[str]:
-    """Return a set of top-level package names for the given project root.
-
-    Args:
-        root: Path to project root directory.
-
-    Returns:
-        A set of names of directories under root that contain ``__init__.py``.
-    """
+def find_project_packages(root: Union[str, Path]) -> Set[str]:
+    """Return a set of top-level package names for the given project root."""
     packages: Set[str] = set()
-    for item in root.iterdir():
-        if item.is_dir() and (item / '__init__.py').exists():
-            packages.add(item.name)
+    root_path = Path(root)
+    for entry in root_path.iterdir():
+        if entry.is_dir() and (entry / "__init__.py").is_file():
+            packages.add(entry.name)
     return packages
 
-def classify_import(module: str, stdlib: Set[str], project_pkgs: Set[str]) -> str:
-    """Classify an import module into categories: 'stdlib', 'third_party', or 'project'.
+def normalize_import(module: str, names: Iterable[str]) -> str:
+    """Normalize an import to a string representation."""
+    if not names:
+        return f"import {module}"
+    if module == "":
+        return ", ".join(sorted(names))
+    return f"from {module} import {', '.join(sorted(names))}"
 
-    Args:
-        module: The module name being imported.
-        stdlib: Set of standard library module names.
-        project_pkgs: Set of top-level project packages.
-
-    Returns:
-        The category name.
-    """
-    root = module.split('.', 1)[0]
-    if root in stdlib:
-        return 'stdlib'
-    if root in project_pkgs:
-        return 'project'
-    return 'third_party'
-
-def normalize_import(module: str, names: List[str]) -> str:
-    """Normalize an import statement to a single-line representation."""
-    if module:
-        return f"from {module} import {', '.join(names)}"
-    else:
-        return f"import {', '.join(names)}"
-
-def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> Tuple[bool, List[str]]:
-    """Process import nodes in the AST and determine if reordering is needed.
-
-    Args:
-        tree: AST of the parsed Python file.
-        stdlib: Set of standard library module names.
-        project_pkgs: Set of top-level project packages.
-
-    Returns:
-        A tuple (modified, import_lines) where:
-          - modified: whether the import block order needs to change.
-          - import_lines: list of normalized import lines for rewriting.
-    """
-    imports: Dict[str, Dict[str, List[str]]] = defaultdict(lambda: defaultdict(list))
-    original_lines: List[str] = []
-
-    # Walk through the AST and collect import info
+def process_imports(tree: ast.Module, stdlib: Set[str], project_pkgs: Set[str]) -> Tuple[bool, List[Tuple[int, str]]]:
+    """Process imports in the AST, return whether changes are needed and a list of warnings."""
+    modified = False
+    warnings: List[Tuple[int, str]] = []
+    imports_by_type: Dict[str, List[str]] = defaultdict(list)
+    import_nodes: List[Tuple[ast.AST, str, Set[str]]] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            modules = [alias.name for alias in node.names]
-            normalized = normalize_import('', modules)
-            original_lines.append(normalized)
-            imports[classify_import(modules[0], stdlib, project_pkgs)][''].extend(modules)
-            logging.debug("Found import: %s", normalized)
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ''
-            names = [alias.name for alias in node.names]
-            normalized = normalize_import(module, names)
-            original_lines.append(normalized)
-            imports[classify_import(module, stdlib, project_pkgs)][module].extend(names)
-            logging.debug("Found import from: %s", normalized)
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            classification = classify_import_rule(node)
+            if classification == "third_party":
+                category = "thirdparty"
+            elif classification == "local":
+                category = "project"
+            else:
+                category = classification
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    module_name = alias.name
+                    imports_by_type[category].append(module_name)
+                    import_nodes.append((node, module_name, set()))
+            else:
+                module = node.module or ""
+                names = {alias.name for alias in node.names}
+                imports_by_type[category].append(module)
+                import_nodes.append((node, module, names))
+    new_import_lines: List[str] = []
+    for category in ("stdlib", "thirdparty", "project"):
+        modules = imports_by_type.get(category, [])
+        if not modules:
+            continue
+        unique_modules = sorted(set(modules))
+        for module in unique_modules:
+            names: Set[str] = set()
+            for nd, mod, names_set in import_nodes:
+                if mod == module:
+                    names |= names_set
+            new_import_lines.append(normalize_import(module, names))
+    original_lines = []
+    import_block_start, import_block_end = find_import_block(tree)
+    if import_block_start is not None:
+        for nd, mod_name, names_set in import_nodes:
+            lineno = getattr(nd, "lineno", None)
+            if lineno is not None:
+                original_lines.append(lineno)
+        original_lines = sorted(set(original_lines))
+    if new_import_lines and original_lines:
+        modified = True
+    return modified, [(line, "Import order/style can be improved") for line in original_lines]
 
-    if not imports:
-        logging.debug("No import statements found.")
-        return False, []
+def rewrite_imports(lines: List[str], new_import_lines: List[str], start: int, end: int) -> None:
+    """Rewrite the import block in lines from start to end."""
+    del lines[start:end]
+    lines[start:start] = new_import_lines + [""]
 
-    # Build normalized new import lines sorted by category and module
-    new_lines: List[str] = []
-    for category in ['stdlib', 'third_party', 'project']:
-        for module, names in sorted(imports.get(category, {}).items()):
-            unique_names = sorted(set(names))
-            new_lines.append(normalize_import(module, unique_names))
-        if imports.get(category):
-            new_lines.append('')  # separate categories
-
-    # Remove trailing blank separators
-    while new_lines and new_lines[-1] == '':
-        new_lines.pop()
-
-    # Determine if modification is needed by comparing ordered lists
-    # Flatten original_lines to exclude duplicates but preserve order
-    original_unique: List[str] = []
-    seen: Set[str] = set()
-    for line in original_lines:
-        if line not in seen:
-            original_unique.append(line)
-            seen.add(line)
-
-    modified = original_unique != new_lines
-    if modified:
-        logging.debug("Import block needs reordering.")
-    else:
-        logging.debug("Import block is already correctly ordered.")
-    return modified, new_lines
-
-def rewrite_imports(lines: List[str], start: int, end: int, new_imports: List[str]) -> List[str]:
-    """Rewrite the import block within lines[start:end] with new_imports.
-
-    Args:
-        lines: List of all lines in the file.
-        start: Start line index of import block.
-        end: End line index of import block.
-        new_imports: List of normalized import lines.
-
-    Returns:
-        A list of lines representing the file with the import block rewritten.
-    """
-    return lines[:start] + new_imports + lines[end:]
-
-def find_import_block(lines: List[str]) -> Optional[Tuple[int, int]]:
-    """Find the start and end indices of the contiguous block of import statements.
-
-    Args:
-        lines: The lines of the file.
-
-    Returns:
-        A tuple (start, end) indices of the import block, or None if no import block found.
-    """
-    start: Optional[int] = None
-    end: Optional[int] = None
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith('import ') or stripped.startswith('from '):
-            if start is None:
-                start = i
-            end = i + 1
-        elif start is not None and line.strip():
+def find_import_block(tree: ast.Module) -> Tuple[Optional[int], Optional[int]]:
+    """Find the start and end line numbers of the top import block."""
+    import_lines = []
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            import_lines.append(node.lineno - 1)
+        else:
             break
-    return (start, end) if start is not None and end is not None else None
+    if not import_lines:
+        return None, None
+    return import_lines[0], import_lines[-1] + 1
 
-def process_file(file_path: Path, stdlib: Set[str], project_pkgs: Set[str], apply: bool = False) -> Tuple[bool, List[Tuple[int, str]]]:
-    """Process a single Python file, check and fix import ordering.
-
-    Args:
-        file_path: Path to the Python file.
-        stdlib: Set of standard library module names.
-        project_pkgs: Set of top-level project packages.
-        apply: If True, apply changes and rewrite the file.
-
-    Returns:
-        A tuple (modified, warnings). 'modified' indicates whether the file was updated,
-        and 'warnings' contains tuples of (line_number, message) if modifications are needed or errors occur.
-    """
+def process_file(file_path: Union[str, Path], stdlib: Set[str], project_pkgs: Set[str], apply: bool = False) -> Tuple[bool, List[Tuple[int, str]]]:
+    """Process a Python file and optionally rewrite imports."""
+    path = Path(file_path)
     try:
-        source = file_path.read_text()
-    except Exception as e:
-        return False, [(0, f"Could not read file: {e}")]
-
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False, []
+    try:
+        _ = extract_imports_from_file(str(file_path))
+    except SyntaxError:
+        pass
     try:
         tree = ast.parse(source)
-    except SyntaxError as e:
-        return False, [(e.lineno or 0, f"Syntax error: {e.msg}")]
+    except SyntaxError as exc:
+        return False, [(exc.lineno or 0, f"SyntaxError: {exc.msg}")]
+    modified, warnings = process_imports(tree, stdlib, project_pkgs)
+    if modified and apply:
+        start, end = find_import_block(tree)
+        if start is not None and end is not None:
+            lines = source.splitlines()
+            imports_by_type: Dict[str, List[str]] = defaultdict(list)
+            import_nodes: List[Tuple[ast.AST, str, Set[str]]] = []
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    classification = classify_import_rule(node)
+                    if classification == "third_party":
+                        category = "thirdparty"
+                    elif classification == "local":
+                        category = "project"
+                    else:
+                        category = classification
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            module_name = alias.name
+                            imports_by_type[category].append(module_name)
+                            import_nodes.append((node, module_name, set()))
+                    else:
+                        module = node.module or ""
+                        names = {alias.name for alias in node.names}
+                        imports_by_type[category].append(module)
+                        import_nodes.append((node, module, names))
+            new_import_lines: List[str] = []
+            for category in ("stdlib", "thirdparty", "project"):
+                modules = imports_by_type.get(category, [])
+                if not modules:
+                    continue
+                unique_modules = sorted(set(modules))
+                for module in unique_modules:
+                    names: Set[str] = set()
+                    for nd, mod_name, names_set in import_nodes:
+                        if mod_name == module:
+                            names |= names_set
+                    new_import_lines.append(normalize_import(module, names))
+            rewrite_imports(lines, new_import_lines, start, end)
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return modified, warnings
 
-    modified, new_import_lines = process_imports(tree, stdlib, project_pkgs)
-    if not modified:
-        return False, []
-
-    lines = source.splitlines()
-    block = find_import_block(lines)
-    if not block:
-        return False, [(0, "Import block could not be located.")]
-
-    start, end = block
-    warnings: List[Tuple[int, str]] = [(start + 1, "Imports are not ordered correctly.")]
-    if apply:
-        new_lines = rewrite_imports(lines, start, end, new_import_lines)
-        try:
-            file_path.write_text('\n'.join(new_lines) + '\n')
-        except Exception as e:
-            warnings.append((0, f"Could not write file: {e}"))
-            return False, warnings
-        return True, warnings
-    else:
-        return True, warnings
-
-def iter_python_files(root: Path, exclude: Optional[Iterable[str]] = None) -> Iterator[Path]:
-    """Yield Python files under the given root directory.
-
-    Args:
-        root: The root directory to search for Python files.
-        exclude: An optional iterable of directory names to skip (e.g. ['venv', '.git']).
-
-    Yields:
-        Paths to Python files relative to the root directory.
-    """
-    exclude_set = set(exclude) if exclude else set()
-    for path in root.rglob('*.py'):
-        if any(part in exclude_set for part in path.parts):
-            continue
-        yield path
+def iter_python_files(root: Union[str, Path]) -> Iterable[str]:
+    """Yield Python file paths under a directory, recursively."""
+    root_path = Path(root)
+    if root_path.is_file() and root_path.suffix == ".py":
+        yield str(root_path)
+        return
+    for p in root_path.rglob("*.py"):
+        yield str(p)
