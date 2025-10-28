@@ -64,12 +64,14 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
                 warnings.append((node.lineno, "H301: one import per line"))
             for alias in node.names:
                 name = alias.name
-                # convert project package import with dot to from import
+                # convert project or stdlib submodules to from-imports
                 if '.' in name:
                     root, rest = name.split('.', 1)
-                    if root in project_pkgs:
+                    # H302: import each attribute from module directly
+                    if root in stdlib or root in project_pkgs:
                         category = classify_import(root, stdlib, project_pkgs)
                         imports_list.append((category, root, rest, "from"))
+                        warnings.append((node.lineno, f"H302: import each object from '{root}' separately"))
                         continue
                 # normal import
                 category = classify_import(name.split('.')[0], stdlib, project_pkgs)
@@ -85,9 +87,10 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
             if any(alias.name == '*' for alias in node.names):
                 warnings.append((node.lineno, "H303: No wildcard (*) import."))
                 continue
-            # multiple names detection (H301)
+            # multiple names detection (H301 / H302)
             if len(node.names) > 1:
                 warnings.append((node.lineno, "H301: one import per line"))
+                warnings.append((node.lineno, "H302: import each object on its own line"))
             module = node.module or ''
             for alias in node.names:
                 name = alias.name

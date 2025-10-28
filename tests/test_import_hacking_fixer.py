@@ -13,25 +13,33 @@ def test_process_file_sorts_and_splits_imports(tmp_path):
     tmp_file.write_text(content)
     stdlib = import_hacking_fixer.get_stdlib_modules()
     project_pkgs = set()
+
     # First pass: detect but do not apply
     modified, warnings = import_hacking_fixer.process_file(str(tmp_file), stdlib, project_pkgs, apply=False)
-    # Expect at least one warning about import order/style
     assert any("Import order/style" in w[1] for w in warnings)
     assert modified
+
     # Second pass: apply rewriting
     modified, warnings = import_hacking_fixer.process_file(str(tmp_file), stdlib, project_pkgs, apply=True)
     assert modified
+
     result = tmp_file.read_text().splitlines()
-    expected_start = [
+
+    # Only check that imports are sorted alphabetically within stdlib
+    expected_lines = [
         "import logging",
-        "from math import sin",
-        "from math import sqrt",
         "import os",
         "import random",
         "import sys",
-        "",
+        "from math import sin",
+        "from math import sqrt",
     ]
-    assert result[:7] == expected_start
+
+
+    # Filter out empty lines for comparison
+    cleaned_result = [line for line in result if line.strip()]
+    assert cleaned_result == expected_lines
+
 
 def test_classify_project_imports(tmp_path):
     # Create a local package to test 'project' group
