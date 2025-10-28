@@ -10,14 +10,16 @@ from __future__ import annotations
 import ast
 import logging
 import sys
+import sysconfig
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
 def get_stdlib_modules() -> Set[str]:
     """Return a set of top-level standard library module names."""
-    stdlib_dir = Path(sys.modules['sys'].__file__).parent
-    modules: Set[str] = set()
+    # Use sysconfig to get the standard library directory and include built-in modules
+    stdlib_dir = Path(sysconfig.get_paths()['stdlib'])
+    modules: Set[str] = set(sys.builtin_module_names)
     for entry in stdlib_dir.iterdir():
         name = entry.stem
         if entry.is_file() and entry.suffix == '.py':
