@@ -104,7 +104,7 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
     category_order = {'stdlib': 0, 'third_party': 1, 'project': 2}
     sorted_list = sorted(
         imports_list,
-        key=lambda x: (category_order[x[0]], f"{x[1]}.{x[2]}" if x[1] else x[2])
+        key=lambda x: (category_order[x[0]], 0 if x[1] else 1, f"{x[1]}.{x[2]}" if x[1] else x[2]),
     )
 
     new_lines: List[str] = []
