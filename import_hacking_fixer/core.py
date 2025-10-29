@@ -19,12 +19,7 @@ from typing import Optional
 from typing import Set
 from typing import Tuple
 
-
-
-
-
-
-
+from .docstring_rules import process_docstrings
 
 
 
@@ -224,6 +219,9 @@ def find_import_block(lines: List[str]) -> Optional[Tuple[int, int]]:
     
     return (start, end) if start is not None and end is not None else None
 
+
+
+
 def process_file(file_path: str, stdlib: Set[str], project_pkgs: Set[str], apply: bool = False) -> Tuple[bool, List[Tuple[int, str]]]:
     """Process a single Python file, check and fix import ordering and hacking rules.
     Returns (modified, warnings).
@@ -237,28 +235,53 @@ def process_file(file_path: str, stdlib: Set[str], project_pkgs: Set[str], apply
         tree = ast.parse(source)
     except SyntaxError as e:
         return False, [(e.lineno or 0, f"Syntax error: {e.msg}")]
+    
+    # Process imports
     modified, new_import_lines, import_warnings = process_imports(tree, stdlib, project_pkgs)
-    if not modified and not import_warnings:
+    
+    # Process docstrings (H405)
+    docstring_modified, docstring_warnings, new_source = process_docstrings(source)
+    
+    # Combine warnings
+    all_warnings = import_warnings + docstring_warnings
+    
+    # Check if any modifications are needed
+    if not modified and not docstring_modified and not all_warnings:
         return False, []
+    
     lines = source.splitlines()
     block = find_import_block(lines)
-    warnings: List[Tuple[int, str]] = import_warnings.copy()
-    if block:
-        start, end = block
-        if apply:
+    warnings: List[Tuple[int, str]] = all_warnings.copy()
+    
+    if apply:
+        # Apply fixes
+        if docstring_modified:
+            # If docstrings were modified, use the new source from docstring processing
+            new_lines = new_source.splitlines()
+            if block and modified:
+                # Still need to apply import fixes to the docstring-modified source
+                start, end = block
+                new_lines = rewrite_imports(new_lines, start, end, new_import_lines)
+        elif block and modified:
+            # Only import fixes needed
+            start, end = block
             new_lines = rewrite_imports(lines, start, end, new_import_lines)
-            try:
-                path_obj.write_text('\n'.join(new_lines) + '\n')
-            except Exception as e:
-                warnings.append((0, f"Could not write file: {e}"))
-                return False, warnings
-            return True, warnings
         else:
-            warnings.append((start + 1, "Import order/style is incorrect."))
-            return True, warnings
+            new_lines = lines.copy()
+        
+        try:
+            path_obj.write_text('\n'.join(new_lines) + '\n')
+        except Exception as e:
+            warnings.append((0, f"Could not write file: {e}"))
+            return False, warnings
+        return True, warnings
     else:
-        warnings.append((0, "Import block could not be located."))
-        return False, warnings
+        if modified or docstring_modified:
+            if block and modified:
+                warnings.append((block[0] + 1, "Import order/style is incorrect."))
+            if docstring_modified:
+                warnings.append((0, "Docstring formatting issues detected."))
+        return True, warnings
 
 def iter_python_files(root: str, ignore: Optional[Iterable[str]] = None) -> Iterator[Path]:
     """Yield Python files under the given root directory, excluding specified patterns."""

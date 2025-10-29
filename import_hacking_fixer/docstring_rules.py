@@ -15,6 +15,8 @@ def process_docstrings(source: str) -> Tuple[bool, List[Tuple[int, str]], str]:
     warnings: List[Tuple[int, str]] = []
     modified = False
 
+    # Process docstrings in reverse order to avoid index shifting issues
+    docstring_nodes = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
             doc = ast.get_docstring(node, clean=False)
@@ -22,25 +24,53 @@ def process_docstrings(source: str) -> Tuple[bool, List[Tuple[int, str]], str]:
                 doc_lines = doc.splitlines()
                 # Only apply if the second line (index 1) is not empty
                 if len(doc_lines) > 1 and doc_lines[1].strip() != "":
-                    # Determine lineno for warning: use start line of docstring
-                    lineno = node.body[0].lineno if hasattr(node, "body") and node.body else node.lineno
-                    warnings.append((lineno, "H405: multi-line docstring summary not separated with an empty line"))
-                    indent = " " * node.col_offset
-                    summary = doc_lines[0]
-                    rest = doc_lines[1:]
-                    new_doc_lines = [indent + '"""', indent + summary, indent + ""]
-                    for l in rest:
-                        new_doc_lines.append(indent + l)
-                    new_doc_lines.append(indent + '"""')
-                    # Replace lines in original source
+                    # Find the actual docstring node in the AST
+                    docstring_node = None
                     if hasattr(node, "body") and node.body:
-                        start = node.body[0].lineno - 1
-                        end = node.body[0].end_lineno - 1  # type: ignore
-                    else:
-                        start = node.lineno - 1
-                        end = node.end_lineno - 1  # type: ignore
-                    lines[start:end + 1] = new_doc_lines
-                    modified = True
+                        for stmt in node.body:
+                            if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+                                docstring_node = stmt
+                                break
+                    
+                    if docstring_node:
+                        docstring_nodes.append((docstring_node, doc_lines))
+
+    # Process docstrings in reverse order (bottom to top) to avoid index shifting
+    for docstring_node, doc_lines in reversed(docstring_nodes):
+        # Get the original indentation from the source
+        docstring_line_idx = docstring_node.lineno - 1
+        original_line = lines[docstring_line_idx]
+        
+        # Find the indentation of the docstring opening
+        indent_match = len(original_line) - len(original_line.lstrip())
+        indent = original_line[:indent_match]
+        
+        # Determine lineno for warning
+        lineno = docstring_node.lineno
+        warnings.append((lineno, "H405: multi-line docstring summary not separated with an empty line"))
+        
+        # Build new docstring lines with proper indentation
+        summary = doc_lines[0]
+        rest = doc_lines[1:]
+        
+        # Find the end line of the docstring
+        end_line_idx = docstring_node.end_lineno - 1  # type: ignore
+        
+        # Create new docstring lines - single docstring with blank line inside
+        new_doc_lines = []
+        new_doc_lines.append(indent + '"""' + summary)
+        new_doc_lines.append(indent)  # Empty line after summary (no closing quotes!)
+        
+        # Add the rest of the docstring - preserve original indentation
+        for line in rest:
+            # Strip leading whitespace from the original line and re-add base indent
+            new_doc_lines.append(indent + line.lstrip())
+        
+        new_doc_lines.append(indent + '"""')
+        
+        # Replace the docstring lines
+        lines[docstring_line_idx:end_line_idx + 1] = new_doc_lines
+        modified = True
 
     new_source = "\n".join(lines)
     return modified, warnings, new_source
