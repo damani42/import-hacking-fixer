@@ -9,6 +9,7 @@ description = "Command-line tool to check and fix Python imports according to Op
 license = { text = "MIT" }
 requires-python = ">=3.7"
 authors = [{ name = "Damani", email = "damani4242@gmail.com" }]
+dependencies = ["click"]
 
 [project.scripts]
 ihf = "import_hacking_fixer.cli:main"
