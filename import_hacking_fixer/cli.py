@@ -9,20 +9,15 @@ import sys
 import click
 from import_hacking_fixer import core
 
-
-
-
-
-
-
-
-
-
-
 try:
     VERSION = f"import-hacking-fixer {metadata.version('import_hacking_fixer')}"
 except Exception:
     VERSION = "import-hacking-fixer"
+
+
+# Global setting toggled by CLI options
+_CHECK_LENGTH = True
+
 
 
 def _handle_files(path: Path, project_packages: str, apply_changes: bool) -> int:
@@ -52,7 +47,14 @@ def _handle_files(path: Path, project_packages: str, apply_changes: bool) -> int
 
     for file_path in file_paths:
         try:
-            modified, warnings = core.process_file(str(file_path), stdlib, project_pkgs, apply=apply_changes)
+            modified, warnings = core.process_file(
+                str(file_path),
+                stdlib,
+                project_pkgs,
+                apply=apply_changes,
+                check_length=_CHECK_LENGTH,
+            )
+
         except Exception as exc:
             logging.error("[%s] ERROR: %s", file_path, exc)
             exit_code = max(exit_code, 2)
@@ -87,10 +89,14 @@ def cli(verbose: bool, quiet: bool) -> None:
             logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, format="%(message)s")
 
 
+
 @cli.command(help="Report import issues without modifying files.")
 @click.argument("path", type=click.Path(exists=True, file_okay=True, dir_okay=True))
 @click.option("--project-packages", default="", help="Comma-separated list of top-level project packages.")
-def check(path: str, project_packages: str) -> None:
+@click.option("--no-length-check", is_flag=True, help="Disable line-length validation (from flake8/black configs).")
+def check(path: str, project_packages: str, no_length_check: bool) -> None:
+    global _CHECK_LENGTH
+    _CHECK_LENGTH = not no_length_check
     exit_code = _handle_files(Path(path), project_packages, apply_changes=False)
     sys.exit(exit_code)
 
@@ -98,7 +104,10 @@ def check(path: str, project_packages: str) -> None:
 @cli.command(help="Fix import issues in place.")
 @click.argument("path", type=click.Path(exists=True, file_okay=True, dir_okay=True))
 @click.option("--project-packages", default="", help="Comma-separated list of top-level project packages.")
-def fix(path: str, project_packages: str) -> None:
+@click.option("--no-length-check", is_flag=True, help="Disable line-length validation (from flake8/black configs).")
+def fix(path: str, project_packages: str, no_length_check: bool) -> None:
+    global _CHECK_LENGTH
+    _CHECK_LENGTH = not no_length_check
     exit_code = _handle_files(Path(path), project_packages, apply_changes=True)
     sys.exit(exit_code)
 

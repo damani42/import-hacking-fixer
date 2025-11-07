@@ -20,7 +20,7 @@ from typing import Set
 from typing import Tuple
 
 from .docstring_rules import process_docstrings
-
+from import_hacking_fixer.style_rules import read_line_length_config, check_line_length
 
 
 def get_stdlib_modules() -> Set[str]:
@@ -227,6 +227,7 @@ def process_file(file_path: str, stdlib: Set[str], project_pkgs: Set[str], apply
     Returns (modified, warnings).
     """
     path_obj = Path(file_path)
+
     try:
         source = path_obj.read_text()
     except Exception as e:
@@ -248,11 +249,16 @@ def process_file(file_path: str, stdlib: Set[str], project_pkgs: Set[str], apply
     # Check if any modifications are needed
     if not modified and not docstring_modified and not all_warnings:
         return False, []
-    
+
     lines = source.splitlines()
     block = find_import_block(lines)
     warnings: List[Tuple[int, str]] = all_warnings.copy()
-    
+
+    # Check line length
+    max_length = read_line_length_config(str(Path(file_path).parent))
+    length_warnings = check_line_length(file_path, max_length)
+    all_warnings.extend(length_warnings)
+
     if apply:
         # Apply fixes
         if docstring_modified:
