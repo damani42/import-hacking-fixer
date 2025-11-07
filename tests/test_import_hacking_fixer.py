@@ -1,4 +1,17 @@
 import import_hacking_fixer
+from import_hacking_fixer.core import run_code_formatter
+
+def test_run_code_formatter(monkeypatch):
+    calls = []
+    def fake_run(cmd, check):
+        calls.append(cmd)
+        return 0
+    monkeypatch.setattr("subprocess.run", fake_run)
+    run_code_formatter(".", "both")
+    assert len(calls) == 2
+    assert any("black" in c for c in calls)
+    assert any("flake8" in c for c in calls)
+
 
 def test_process_file_sorts_and_splits_imports(tmp_path):
     # create sample file with messy imports

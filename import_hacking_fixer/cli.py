@@ -8,6 +8,8 @@ import sys
 
 import click
 from import_hacking_fixer import core
+from import_hacking_fixer.core import run_code_formatter
+
 
 try:
     VERSION = f"import-hacking-fixer {metadata.version('import_hacking_fixer')}"
@@ -106,9 +108,24 @@ def check(path: str, project_packages: str, no_length_check: bool) -> None:
 @click.option("--project-packages", default="", help="Comma-separated list of top-level project packages.")
 @click.option("--no-length-check", is_flag=True, help="Disable line-length validation (from flake8/black configs).")
 def fix(path: str, project_packages: str, no_length_check: bool) -> None:
+    """Fix imports and optionally format code."""
     global _CHECK_LENGTH
     _CHECK_LENGTH = not no_length_check
     exit_code = _handle_files(Path(path), project_packages, apply_changes=True)
+
+    # Import ici pour éviter circular import
+    from import_hacking_fixer.core import run_code_formatter
+    import click
+
+    # Propose à l’utilisateur d’exécuter Black/Flake8
+    if click.confirm("Run code formatters (Black/Flake8) after fixes?", default=False):
+        formatter = click.prompt(
+            "Select formatter",
+            type=click.Choice(["black", "flake8", "both"], case_sensitive=False),
+            default="both",
+        )
+        run_code_formatter(str(path), formatter)
+
     sys.exit(exit_code)
 
 

@@ -6,6 +6,7 @@ discover project packages and standard library modules.
 """
 from __future__ import annotations
 import ast
+import subprocess
 from collections import defaultdict
 import logging
 from pathlib import Path
@@ -21,6 +22,8 @@ from typing import Tuple
 
 from .docstring_rules import process_docstrings
 from import_hacking_fixer.style_rules import read_line_length_config, check_line_length
+
+LOG = logging.getLogger(__name__)
 
 
 def get_stdlib_modules() -> Set[str]:
@@ -131,10 +134,10 @@ def process_imports(tree: ast.AST, stdlib: Set[str], project_pkgs: Set[str]) -> 
                 category = classify_import(module, stdlib, project_pkgs)
                 imports_list.append((category, module, name, "from"))
 
-    logging.debug(f"Found {len(imports_list)} imports and {len(warnings)} warnings")
+    LOG.debug(f"Found {len(imports_list)} imports and {len(warnings)} warnings")
     
     if not imports_list:
-        logging.debug("No import statements found.")
+        LOG.debug("No import statements found.")
         return False, [], warnings
 
     # Special handling for __future__ imports - they must come first
@@ -297,3 +300,32 @@ def iter_python_files(root: str, ignore: Optional[Iterable[str]] = None) -> Iter
         if any(str(path).startswith(str(root_path / pattern)) for pattern in ignore_set):
             continue
         yield path
+
+
+def run_code_formatter(target_path: str, formatter: str):
+    """
+    Run external code formatters after fixing imports.
+
+    Args:
+        target_path: Path or directory to run formatters on.
+        formatter: One of 'black', 'flake8', or 'both'.
+    """
+    cmds = {
+        "black": ["black", target_path],
+        "flake8": ["flake8", target_path],
+    }
+
+    if formatter == "both":
+        for tool in ("black", "flake8"):
+            LOG.info(f"Running {tool} on {target_path}...")
+            try:
+                subprocess.run(cmds[tool], check=False)
+            except FileNotFoundError:
+                LOG.warning(f"{tool} not found. Please install it or use `pip install .[format]`.")
+    else:
+        LOG.info(f"Running {formatter} on {target_path}...")
+        try:
+            subprocess.run(cmds[formatter], check=False)
+        except FileNotFoundError:
+            LOG.warning(f"{formatter} not found. Please install it or use `pip install .[format]`.")
+
