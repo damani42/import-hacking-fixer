@@ -1,6 +1,11 @@
 import re
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    import tomli as tomllib  # Backport for Python <3.11
+
 
 def read_line_length_config(root: str) -> int:
     """Detect max line length from flake8/black configs or use default."""
